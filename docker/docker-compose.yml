@@ -1,0 +1,146 @@
+version: "3.9"
+
+services:
+  # ─── CLOUD PROFILE ─────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    profiles: [cloud]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-griltek}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-griltek_pos}
+    volumes:
+      - cloud_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-griltek}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: [cloud]
+    restart: unless-stopped
+    volumes:
+      - cloud_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    profiles: [cloud]
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-griltek}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-griltek_pos}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  backoffice:
+    build:
+      context: ../backoffice
+    profiles: [cloud]
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+
+  # ─── EDGE PROFILE ──────────────────────────────────────────────────────────
+  edge-db:
+    image: postgres:16-alpine
+    profiles: [edge]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${EDGE_POSTGRES_USER:-griltek_edge}
+      POSTGRES_PASSWORD: ${EDGE_POSTGRES_PASSWORD:-changeme_edge}
+      POSTGRES_DB: ${EDGE_POSTGRES_DB:-griltek_edge}
+    volumes:
+      - edge_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EDGE_POSTGRES_USER:-griltek_edge}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  edge-redis:
+    image: redis:7-alpine
+    profiles: [edge]
+    restart: unless-stopped
+    volumes:
+      - edge_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  store-server:
+    build:
+      context: ..
+      dockerfile: store-server/Dockerfile
+    profiles: [edge]
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      EDGE_DATABASE_URL: postgresql+asyncpg://${EDGE_POSTGRES_USER:-griltek_edge}:${EDGE_POSTGRES_PASSWORD:-changeme_edge}@edge-db:5432/${EDGE_POSTGRES_DB:-griltek_edge}
+      EDGE_REDIS_URL: redis://edge-redis:6379/0
+    ports:
+      - "8001:8001"
+    depends_on:
+      edge-db:
+        condition: service_healthy
+      edge-redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001"
+
+  kds:
+    build:
+      context: ../kds
+    profiles: [edge]
+    restart: unless-stopped
+    ports:
+      - "5177:80"
+
+  kiosk-selfcheckout:
+    build:
+      context: ../kiosk-selfcheckout
+    profiles: [edge]
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+
+  kiosk-pricecheck:
+    build:
+      context: ../kiosk-pricecheck
+    profiles: [edge]
+    restart: unless-stopped
+    ports:
+      - "5175:80"
+
+  kiosk-order:
+    build:
+      context: ../kiosk-order
+    profiles: [edge]
+    restart: unless-stopped
+    ports:
+      - "5176:80"
+
+volumes:
+  cloud_pg_data:
+  cloud_redis_data:
+  edge_pg_data:
+  edge_redis_data:
