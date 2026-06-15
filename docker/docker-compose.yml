@@ -58,6 +58,14 @@ services:
     ports:
       - "5173:80"
 
+  customer-app:
+    build:
+      context: ../customer-app
+    profiles: [cloud]
+    restart: unless-stopped
+    ports:
+      - "5178:80"
+
   # ─── EDGE PROFILE ──────────────────────────────────────────────────────────
   edge-db:
     image: postgres:16-alpine

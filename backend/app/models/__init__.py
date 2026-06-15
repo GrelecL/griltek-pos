@@ -1,5 +1,7 @@
 from app.models.audit import AuditLog
+from app.models.coupon import Coupon, CouponRedemption
 from app.models.esl import ESLDevice
+from app.models.portal import CustomerPortalAccount
 from app.models.pricing import PricingRule
 from app.models.auth import Role, User
 from app.models.catalog import Barcode, Category, Price, Product
@@ -47,6 +49,8 @@ __all__ = [
     "AuditLog",
     "PricingRule",
     "ESLDevice",
+    "Coupon", "CouponRedemption",
+    "CustomerPortalAccount",
     "GiftCard", "GiftCardTransaction",
     "LoyaltyProgram", "LoyaltyAccount", "LoyaltyTransaction",
     "CreditTransaction",
