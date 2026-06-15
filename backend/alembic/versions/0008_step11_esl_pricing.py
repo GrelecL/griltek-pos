@@ -11,15 +11,15 @@ depends_on = None
 def upgrade():
     op.create_table(
         "pricing_rules",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id"), nullable=False),
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column("tenant_id", sa.UUID(as_uuid=True), sa.ForeignKey("tenants.id"), nullable=False),
         sa.Column("name", sa.String(120), nullable=False),
         sa.Column("rule_type", sa.String(30), nullable=False),
         sa.Column("priority", sa.Integer, nullable=False, server_default="100"),
         sa.Column("conditions", sa.JSON, nullable=False, server_default="{}"),
         sa.Column("action", sa.JSON, nullable=False, server_default="{}"),
-        sa.Column("is_active", sa.Boolean, nullable=False, server_default="1"),
-        sa.Column("stackable", sa.Boolean, nullable=False, server_default="1"),
+        sa.Column("is_active", sa.Boolean, nullable=False, server_default="true"),
+        sa.Column("stackable", sa.Boolean, nullable=False, server_default="true"),
         sa.Column("valid_from", sa.DateTime(timezone=True), nullable=True),
         sa.Column("valid_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
@@ -32,10 +32,10 @@ def upgrade():
 
     op.create_table(
         "esl_devices",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("location_id", sa.String(36), sa.ForeignKey("locations.id"), nullable=False),
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column("location_id", sa.UUID(as_uuid=True), sa.ForeignKey("locations.id"), nullable=False),
         sa.Column("esl_id", sa.String(100), nullable=False),
-        sa.Column("product_id", sa.String(36), sa.ForeignKey("products.id"), nullable=True),
+        sa.Column("product_id", sa.UUID(as_uuid=True), sa.ForeignKey("products.id"), nullable=True),
         sa.Column("status", sa.String(20), nullable=False, server_default="pending"),
         sa.Column("last_synced_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_price", sa.Numeric(10, 2), nullable=True),

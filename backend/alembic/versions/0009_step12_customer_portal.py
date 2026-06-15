@@ -11,11 +11,11 @@ depends_on = None
 def upgrade():
     op.create_table(
         "customer_portal_accounts",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("customer_id", sa.String(36), sa.ForeignKey("customers.id"),
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column("customer_id", sa.UUID(as_uuid=True), sa.ForeignKey("customers.id"),
                   nullable=False, unique=True),
         sa.Column("pin_hash", sa.String(64), nullable=False),
-        sa.Column("is_active", sa.Boolean, nullable=False, server_default="1"),
+        sa.Column("is_active", sa.Boolean, nullable=False, server_default="true"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
@@ -24,8 +24,8 @@ def upgrade():
 
     op.create_table(
         "coupons",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id"), nullable=False),
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column("tenant_id", sa.UUID(as_uuid=True), sa.ForeignKey("tenants.id"), nullable=False),
         sa.Column("code", sa.String(60), nullable=False, unique=True),
         sa.Column("name", sa.String(120), nullable=False),
         sa.Column("description", sa.String(500), nullable=True),
@@ -37,7 +37,7 @@ def upgrade():
         sa.Column("max_uses", sa.Integer, nullable=True),
         sa.Column("per_customer_limit", sa.Integer, nullable=False, server_default="1"),
         sa.Column("used_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("is_active", sa.Boolean, nullable=False, server_default="1"),
+        sa.Column("is_active", sa.Boolean, nullable=False, server_default="true"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
@@ -47,10 +47,10 @@ def upgrade():
 
     op.create_table(
         "coupon_redemptions",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("coupon_id", sa.String(36), sa.ForeignKey("coupons.id"), nullable=False),
-        sa.Column("customer_id", sa.String(36), sa.ForeignKey("customers.id"), nullable=False),
-        sa.Column("sale_id", sa.String(36), sa.ForeignKey("sales.id"), nullable=True),
+        sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
+        sa.Column("coupon_id", sa.UUID(as_uuid=True), sa.ForeignKey("coupons.id"), nullable=False),
+        sa.Column("customer_id", sa.UUID(as_uuid=True), sa.ForeignKey("customers.id"), nullable=False),
+        sa.Column("sale_id", sa.UUID(as_uuid=True), sa.ForeignKey("sales.id"), nullable=True),
         sa.Column("redeemed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
