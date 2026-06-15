@@ -111,6 +111,7 @@ class SaleCreate(BaseSchema):
     customer_id: uuid.UUID | None = None
     sale_type: str = "sale"
     note: str | None = None
+    coupon_code: str | None = None
     lines: list[SaleLineCreate]
     payments: list[PaymentCreate]
 

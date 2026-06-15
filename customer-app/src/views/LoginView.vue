@@ -47,11 +47,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 
 const mode = ref<'login' | 'register'>('login')
@@ -60,6 +61,14 @@ const contact = ref('')
 const pin = ref('')
 const error = ref('')
 const loading = ref(false)
+
+onMounted(() => {
+  const tenantParam = route.query.tenant as string | undefined
+  if (tenantParam) {
+    slug.value = tenantParam
+    mode.value = 'register'
+  }
+})
 
 const canSubmit = computed(() => slug.value && contact.value && pin.value.length >= 4)
 

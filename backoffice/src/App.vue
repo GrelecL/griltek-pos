@@ -100,29 +100,124 @@
         </template>
         <button class="refresh-btn" @click="loadSync">Osveži</button>
       </div>
+
+      <!-- Customers -->
+      <div v-else-if="page === 'customers'" class="page">
+        <h1>Stranke</h1>
+        <div v-if="!TENANT_ID" class="notice">Nastavite VITE_TENANT_ID v okolišu.</div>
+        <div v-else-if="customersLoading" class="loading-full">Nalagam...</div>
+        <template v-else>
+          <DataTable
+            title="Stranke"
+            :columns="customerCols"
+            :rows="customers"
+            :loading="customersLoading"
+          />
+        </template>
+        <button class="refresh-btn" @click="loadCustomers">Osveži</button>
+      </div>
+
+      <!-- Coupons -->
+      <div v-else-if="page === 'coupons'" class="page">
+        <div class="page-header">
+          <h1>Kuponi</h1>
+          <button class="btn-primary" @click="showCouponForm = !showCouponForm">
+            {{ showCouponForm ? 'Zapri' : '+ Nov kupon' }}
+          </button>
+        </div>
+
+        <div v-if="showCouponForm" class="form-card">
+          <h2>Nov kupon</h2>
+          <div class="form-grid">
+            <div class="field">
+              <label>Koda</label>
+              <input v-model="newCoupon.code" type="text" placeholder="SAVE10" />
+            </div>
+            <div class="field">
+              <label>Naziv</label>
+              <input v-model="newCoupon.name" type="text" placeholder="10% popust" />
+            </div>
+            <div class="field">
+              <label>Tip popusta</label>
+              <select v-model="newCoupon.discount_type">
+                <option value="pct_discount">Odstotek (%)</option>
+                <option value="fixed_discount">Fiksni znesek (€)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Vrednost</label>
+              <input v-model="newCoupon.discount_value" type="number" min="0" step="0.01" />
+            </div>
+            <div class="field">
+              <label>Veljavno od</label>
+              <input v-model="newCoupon.valid_from" type="datetime-local" />
+            </div>
+            <div class="field">
+              <label>Veljavno do</label>
+              <input v-model="newCoupon.valid_until" type="datetime-local" />
+            </div>
+            <div class="field">
+              <label>Maks. uporab</label>
+              <input v-model="newCoupon.max_uses" type="number" min="1" placeholder="neomejeno" />
+            </div>
+            <div class="field">
+              <label>Limit/stranka</label>
+              <input v-model="newCoupon.per_customer_limit" type="number" min="1" value="1" />
+            </div>
+          </div>
+          <p v-if="couponError" class="error-msg">{{ couponError }}</p>
+          <button class="btn-primary" :disabled="couponSaving" @click="saveCoupon">
+            {{ couponSaving ? 'Shranjevanje...' : 'Shrani kupon' }}
+          </button>
+        </div>
+
+        <div v-if="couponsLoading" class="loading-full">Nalagam...</div>
+        <DataTable v-else title="Kuponi" :columns="couponCols" :rows="coupons" :loading="couponsLoading" />
+        <button class="refresh-btn" @click="loadCoupons">Osveži</button>
+      </div>
+
+      <!-- Registration QR -->
+      <div v-else-if="page === 'regqr'" class="page">
+        <h1>QR za registracijo</h1>
+        <div v-if="!TENANT_SLUG" class="notice">Nastavite VITE_TENANT_SLUG v okolišu.</div>
+        <template v-else>
+          <p class="reg-hint">Pokažite to QR kodo stranki — aplikacija se odpre s predizpolnjenim poljem za naziv trgovine.</p>
+          <div class="qr-wrapper">
+            <canvas ref="qrCanvas" class="qr-canvas"></canvas>
+          </div>
+          <p class="qr-url">{{ registrationUrl }}</p>
+        </template>
+      </div>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import QRCode from 'qrcode'
 import StatCard from './components/StatCard.vue'
 import DataTable from './components/DataTable.vue'
 import {
   fetchDashboard, fetchSalesByProduct, fetchPaymentBreakdown, fetchVATBreakdown,
-  fetchSyncHealth, csvUrl,
+  fetchSyncHealth, fetchCustomers, fetchCoupons, createCoupon, csvUrl, CUSTOMER_APP_URL,
   type DashboardData, type ProductRow, type PaymentRow, type VATRow, type SyncHealth,
+  type CustomerRow, type CouponRow, type CouponCreate,
 } from './api/client'
 
 const LOCATION_ID = (import.meta.env.VITE_LOCATION_ID as string) || ''
 const WAREHOUSE_ID = (import.meta.env.VITE_WAREHOUSE_ID as string) || ''
+const TENANT_ID = (import.meta.env.VITE_TENANT_ID as string) || ''
+const TENANT_SLUG = (import.meta.env.VITE_TENANT_SLUG as string) || ''
 
-type Page = 'dashboard' | 'reports' | 'sync'
+type Page = 'dashboard' | 'reports' | 'sync' | 'customers' | 'coupons' | 'regqr'
 const page = ref<Page>('dashboard')
 const nav = [
   { id: 'dashboard' as Page, label: 'Nadzorna plošča' },
   { id: 'reports' as Page, label: 'Poročila' },
   { id: 'sync' as Page, label: 'Sinhronizacija' },
+  { id: 'customers' as Page, label: 'Stranke' },
+  { id: 'coupons' as Page, label: 'Kuponi' },
+  { id: 'regqr' as Page, label: 'Reg. QR' },
 ]
 
 // date range
@@ -215,6 +310,92 @@ function downloadReport(type: string) {
   window.open(urls[type], '_blank')
 }
 
+// ── Customers ─────────────────────────────────────────────────────────────────
+
+const customers = ref<CustomerRow[]>([])
+const customersLoading = ref(false)
+const customerCols = [
+  { key: 'name', label: 'Ime' },
+  { key: 'phone', label: 'Telefon' },
+  { key: 'email', label: 'E-mail' },
+]
+
+async function loadCustomers() {
+  if (!TENANT_ID) return
+  customersLoading.value = true
+  try { customers.value = await fetchCustomers(TENANT_ID) }
+  catch { customers.value = [] }
+  finally { customersLoading.value = false }
+}
+
+// ── Coupons ───────────────────────────────────────────────────────────────────
+
+const coupons = ref<CouponRow[]>([])
+const couponsLoading = ref(false)
+const showCouponForm = ref(false)
+const couponSaving = ref(false)
+const couponError = ref('')
+const couponCols = [
+  { key: 'code', label: 'Koda' },
+  { key: 'name', label: 'Naziv' },
+  { key: 'discount_type', label: 'Tip' },
+  { key: 'discount_value', label: 'Vrednost' },
+  { key: 'used_count', label: 'Uporab' },
+  { key: 'is_active', label: 'Aktiven' },
+]
+
+const newCoupon = ref<CouponCreate & { valid_from: string; valid_until: string; max_uses: string; per_customer_limit: number }>({
+  code: '', name: '', discount_type: 'pct_discount', discount_value: 0,
+  valid_from: '', valid_until: '', max_uses: '', per_customer_limit: 1,
+})
+
+async function loadCoupons() {
+  couponsLoading.value = true
+  try { coupons.value = await fetchCoupons() }
+  catch { coupons.value = [] }
+  finally { couponsLoading.value = false }
+}
+
+async function saveCoupon() {
+  couponError.value = ''
+  couponSaving.value = true
+  try {
+    const payload: CouponCreate = {
+      tenant_id: TENANT_ID || undefined,
+      code: newCoupon.value.code,
+      name: newCoupon.value.name,
+      discount_type: newCoupon.value.discount_type,
+      discount_value: newCoupon.value.discount_value,
+      per_customer_limit: newCoupon.value.per_customer_limit,
+    }
+    if (newCoupon.value.valid_from) payload.valid_from = new Date(newCoupon.value.valid_from).toISOString()
+    if (newCoupon.value.valid_until) payload.valid_until = new Date(newCoupon.value.valid_until).toISOString()
+    if (newCoupon.value.max_uses) payload.max_uses = parseInt(newCoupon.value.max_uses as string)
+    await createCoupon(payload)
+    showCouponForm.value = false
+    newCoupon.value = { code: '', name: '', discount_type: 'pct_discount', discount_value: 0, valid_from: '', valid_until: '', max_uses: '', per_customer_limit: 1 }
+    await loadCoupons()
+  } catch (e: any) {
+    couponError.value = e.message ?? 'Napaka pri shranjevanju'
+  } finally {
+    couponSaving.value = false
+  }
+}
+
+// ── Registration QR ───────────────────────────────────────────────────────────
+
+const qrCanvas = ref<HTMLCanvasElement | null>(null)
+const registrationUrl = computed(() => TENANT_SLUG ? `${CUSTOMER_APP_URL}/login?tenant=${TENANT_SLUG}` : '')
+
+watch([page, qrCanvas], async ([p]) => {
+  if (p === 'regqr' && TENANT_SLUG) {
+    await nextTick()
+    if (qrCanvas.value) {
+      await QRCode.toCanvas(qrCanvas.value, registrationUrl.value, { width: 280, margin: 2 })
+    }
+  }
+})
+
 onMounted(() => { loadDashboard(); loadSync() })
 </script>
 
@@ -255,4 +436,24 @@ h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
 .sync-status.ok { background: #d5f5e3; color: #1e8449; }
 .sync-status.degraded { background: #fdebd0; color: #935116; }
 .refresh-btn { margin-top: 1.5rem; padding: 0.6rem 1.5rem; background: #2980b9; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 0.95rem; }
+
+/* Customers / Coupons */
+.notice { background: #fdebd0; border-radius: 8px; padding: 1rem; color: #935116; margin-bottom: 1rem; }
+
+/* Coupon form */
+.form-card { background: #fff; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.form-card h2 { font-size: 1.1rem; margin-bottom: 1rem; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 0.8rem; font-weight: 600; color: #666; }
+.field input, .field select { border: 1px solid #ddd; border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.9rem; }
+.btn-primary { padding: 0.55rem 1.25rem; background: #2980b9; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600; }
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.error-msg { color: #c0392b; font-size: 0.875rem; margin-bottom: 0.75rem; }
+
+/* Registration QR */
+.reg-hint { color: #555; margin-bottom: 1.5rem; }
+.qr-wrapper { background: #fff; display: inline-flex; border-radius: 12px; padding: 1.25rem; box-shadow: 0 1px 8px rgba(0,0,0,.12); margin-bottom: 1rem; }
+.qr-canvas { display: block; }
+.qr-url { font-size: 0.85rem; color: #777; word-break: break-all; max-width: 320px; }
 </style>

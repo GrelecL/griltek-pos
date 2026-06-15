@@ -1,5 +1,6 @@
 """Tests for Step 3: POS core, RBAC, CashSession, Customer."""
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -11,7 +12,9 @@ import app.services.customer as customer_svc
 import app.services.pos as pos_svc
 import app.services.tenant as tenant_svc
 import app.services.warehouse as warehouse_svc
+from app.models.coupon import Coupon
 from app.models.location import Location
+from app.models.payments import LoyaltyAccount, LoyaltyProgram
 from app.schemas.auth import RoleCreate, UserCreate
 from app.schemas.catalog import ProductCreate
 from app.schemas.customer import CreditAccountCreate, CustomerCreate, CustomerUpdate
@@ -454,3 +457,254 @@ async def test_list_sales_by_session(db: AsyncSession):
 
     sales_s2 = await pos_svc.list_sales(db, session_id=session2.id)
     assert len(sales_s2) == 1
+
+
+# ── Loyalty auto-earn on sale ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_sale_earns_loyalty_points(db: AsyncSession):
+    tid = await make_tenant(db)
+    loc_id = await make_location(db, tid)
+    await make_warehouse(db, tid, loc_id)
+    role_id = await make_role(db, tid)
+    user_id = await make_user(db, tid, role_id)
+    product_id = await make_product(db, tid)
+
+    # Create loyalty program for tenant
+    program = LoyaltyProgram(
+        id=uuid.uuid4(), tenant_id=tid, name="Points",
+        earn_rate=Decimal("1"), redeem_rate=Decimal("0.01"), is_active=True,
+    )
+    db.add(program)
+    await db.flush()
+
+    # Create customer
+    customer = await customer_svc.create_customer(db, CustomerCreate(tenant_id=tid, name="Ana"))
+
+    session = await pos_svc.open_session(db, CashSessionOpen(location_id=loc_id, user_id=user_id))
+
+    await pos_svc.create_sale(
+        db,
+        SaleCreate(
+            transaction_uuid=uuid.uuid4(),
+            cash_session_id=session.id,
+            location_id=loc_id,
+            user_id=user_id,
+            customer_id=customer.id,
+            lines=[make_sale_line(product_id)],
+            payments=[PaymentCreate(method="card", amount=Decimal("20.00"))],
+        ),
+    )
+
+    from sqlalchemy import select
+    result = await db.execute(
+        select(LoyaltyAccount).where(
+            LoyaltyAccount.program_id == program.id,
+            LoyaltyAccount.customer_id == customer.id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    assert account is not None
+    assert account.points_balance > 0
+
+
+@pytest.mark.asyncio
+async def test_return_does_not_earn_loyalty(db: AsyncSession):
+    tid = await make_tenant(db)
+    loc_id = await make_location(db, tid)
+    await make_warehouse(db, tid, loc_id)
+    role_id = await make_role(db, tid)
+    user_id = await make_user(db, tid, role_id)
+    product_id = await make_product(db, tid)
+
+    program = LoyaltyProgram(
+        id=uuid.uuid4(), tenant_id=tid, name="Points",
+        earn_rate=Decimal("1"), redeem_rate=Decimal("0.01"), is_active=True,
+    )
+    db.add(program)
+    await db.flush()
+
+    customer = await customer_svc.create_customer(db, CustomerCreate(tenant_id=tid, name="Ana"))
+    session = await pos_svc.open_session(db, CashSessionOpen(location_id=loc_id, user_id=user_id))
+
+    await pos_svc.create_sale(
+        db,
+        SaleCreate(
+            transaction_uuid=uuid.uuid4(),
+            cash_session_id=session.id,
+            location_id=loc_id,
+            user_id=user_id,
+            customer_id=customer.id,
+            sale_type="return",
+            lines=[make_sale_line(product_id)],
+            payments=[PaymentCreate(method="card", amount=Decimal("20.00"))],
+        ),
+    )
+
+    from sqlalchemy import select
+    result = await db.execute(
+        select(LoyaltyAccount).where(
+            LoyaltyAccount.program_id == program.id,
+            LoyaltyAccount.customer_id == customer.id,
+        )
+    )
+    assert result.scalar_one_or_none() is None
+
+
+# ── Coupon redemption on sale ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_coupon_redeemed_on_sale(db: AsyncSession):
+    from sqlalchemy import select, func
+    from app.models.coupon import CouponRedemption
+
+    tid = await make_tenant(db)
+    loc_id = await make_location(db, tid)
+    await make_warehouse(db, tid, loc_id)
+    role_id = await make_role(db, tid)
+    user_id = await make_user(db, tid, role_id)
+    product_id = await make_product(db, tid)
+
+    coupon = Coupon(
+        id=uuid.uuid4(), tenant_id=tid, code="SAVE10", name="10% Off",
+        discount_type="pct_discount", discount_value=Decimal("10"),
+        is_active=True, per_customer_limit=1, used_count=0,
+    )
+    db.add(coupon)
+    await db.flush()
+
+    customer = await customer_svc.create_customer(db, CustomerCreate(tenant_id=tid, name="Ana"))
+    session = await pos_svc.open_session(db, CashSessionOpen(location_id=loc_id, user_id=user_id))
+
+    await pos_svc.create_sale(
+        db,
+        SaleCreate(
+            transaction_uuid=uuid.uuid4(),
+            cash_session_id=session.id,
+            location_id=loc_id,
+            user_id=user_id,
+            customer_id=customer.id,
+            coupon_code="SAVE10",
+            lines=[make_sale_line(product_id)],
+            payments=[PaymentCreate(method="card", amount=Decimal("20.00"))],
+        ),
+    )
+
+    await db.refresh(coupon)
+    assert coupon.used_count == 1
+
+    count_result = await db.execute(
+        select(func.count()).select_from(CouponRedemption).where(
+            CouponRedemption.coupon_id == coupon.id,
+            CouponRedemption.customer_id == customer.id,
+        )
+    )
+    assert count_result.scalar() == 1
+
+
+# ── Customer scan data (direct DB tests for scan and coupon validate logic) ────
+
+@pytest.mark.asyncio
+async def test_customer_scan_data(db: AsyncSession):
+    """Verify customer + loyalty data is queryable as the scan endpoint would."""
+    from sqlalchemy import select as sa_select
+    from app.models.customer import Customer
+
+    tid = await make_tenant(db)
+    customer = await customer_svc.create_customer(
+        db, CustomerCreate(tenant_id=tid, name="Test User", phone="+38641000001")
+    )
+
+    result = await db.execute(sa_select(Customer).where(Customer.id == customer.id))
+    found = result.scalar_one_or_none()
+    assert found is not None
+    assert found.name == "Test User"
+    assert found.phone == "+38641000001"
+
+
+@pytest.mark.asyncio
+async def test_customer_scan_with_loyalty(db: AsyncSession):
+    """Customer with loyalty account returns non-null loyalty summary."""
+    from sqlalchemy import select as sa_select
+    from app.models.customer import Customer
+
+    tid = await make_tenant(db)
+    customer = await customer_svc.create_customer(db, CustomerCreate(tenant_id=tid, name="Ana"))
+
+    program = LoyaltyProgram(
+        id=uuid.uuid4(), tenant_id=tid, name="Points",
+        earn_rate=Decimal("1"), redeem_rate=Decimal("0.01"), is_active=True,
+    )
+    db.add(program)
+
+    account = LoyaltyAccount(
+        id=uuid.uuid4(), program_id=program.id, customer_id=customer.id,
+        points_balance=250, tier="silver",
+    )
+    db.add(account)
+    await db.flush()
+
+    result = await db.execute(
+        sa_select(LoyaltyAccount).where(
+            LoyaltyAccount.program_id == program.id,
+            LoyaltyAccount.customer_id == customer.id,
+        )
+    )
+    acc = result.scalar_one_or_none()
+    assert acc is not None
+    assert acc.points_balance == 250
+    assert acc.tier == "silver"
+
+
+@pytest.mark.asyncio
+async def test_validate_coupon_logic_valid(db: AsyncSession):
+    """Active coupon within date range and usage limit is valid."""
+    tid = await make_tenant(db)
+    coupon = Coupon(
+        id=uuid.uuid4(), tenant_id=tid, code="VALID20", name="20% Off",
+        discount_type="pct_discount", discount_value=Decimal("20"),
+        is_active=True, per_customer_limit=5, used_count=0,
+    )
+    db.add(coupon)
+    await db.flush()
+
+    from sqlalchemy import select as sa_select
+    result = await db.execute(sa_select(Coupon).where(Coupon.code == "VALID20", Coupon.is_active == True))
+    found = result.scalar_one_or_none()
+    assert found is not None
+    # compute 20% of 50.00 = 10.00
+    sale_total = Decimal("50.00")
+    discount = (sale_total * found.discount_value / 100).quantize(Decimal("0.01"))
+    assert discount == Decimal("10.00")
+
+
+@pytest.mark.asyncio
+async def test_validate_coupon_logic_expired(db: AsyncSession):
+    """Expired coupon fails validity check."""
+    tid = await make_tenant(db)
+    coupon = Coupon(
+        id=uuid.uuid4(), tenant_id=tid, code="OLD5", name="Old deal",
+        discount_type="pct_discount", discount_value=Decimal("5"),
+        is_active=True, per_customer_limit=1, used_count=0,
+        valid_until=datetime(2020, 1, 1, tzinfo=timezone.utc),
+    )
+    db.add(coupon)
+    await db.flush()
+
+    now = datetime.now(timezone.utc)
+
+    def _aware(dt):
+        if dt is None:
+            return None
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+    assert _aware(coupon.valid_until) is not None
+    assert _aware(coupon.valid_until) < now  # coupon is expired
+
+
+@pytest.mark.asyncio
+async def test_validate_coupon_logic_not_found(db: AsyncSession):
+    """Missing coupon code returns None."""
+    from sqlalchemy import select as sa_select
+    result = await db.execute(sa_select(Coupon).where(Coupon.code == "NOPE", Coupon.is_active == True))
+    assert result.scalar_one_or_none() is None

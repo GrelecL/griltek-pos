@@ -6,8 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.coupon import Coupon, CouponRedemption
+from app.models.location import Location
 from app.models.pos import CashSession, Payment, Sale, SaleLine
 from app.models.warehouse import StockMovement, Warehouse
+from app.services import loyalty as loyalty_svc
 from app.schemas.pos import (
     CashAdjustment,
     CashSessionClose,
@@ -324,6 +327,32 @@ async def create_sale(db: AsyncSession, data: SaleCreate) -> Sale:
                 session = await db.get(CashSession, data.cash_session_id)
                 if session:
                     session.cash_in += pay.amount
+
+    # auto-earn loyalty points when customer is attached to a sale
+    if data.customer_id and data.sale_type == "sale":
+        loc_result = await db.execute(select(Location).where(Location.id == data.location_id))
+        loc = loc_result.scalar_one_or_none()
+        if loc:
+            program = await loyalty_svc.get_program(db, loc.tenant_id)
+            if program:
+                account = await loyalty_svc.get_or_create_account(db, program.id, data.customer_id)
+                await loyalty_svc.earn_points(db, program, account, total, sale_id=sale.id)
+
+    # redeem coupon if provided
+    if data.coupon_code and data.customer_id and data.sale_type == "sale":
+        coupon_result = await db.execute(
+            select(Coupon).where(Coupon.code == data.coupon_code, Coupon.is_active == True)
+        )
+        coupon = coupon_result.scalar_one_or_none()
+        if coupon:
+            db.add(CouponRedemption(
+                id=uuid.uuid4(),
+                coupon_id=coupon.id,
+                customer_id=data.customer_id,
+                sale_id=sale.id,
+                redeemed_at=datetime.now(timezone.utc),
+            ))
+            coupon.used_count += 1
 
     await db.commit()
     result = await db.execute(

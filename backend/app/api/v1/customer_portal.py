@@ -150,6 +150,29 @@ async def coupons(payload: dict = Depends(_require_customer), db: AsyncSession =
 
 # ── admin coupon management (staff endpoint, not customer-facing) ─────────────
 
+@router.get("/coupons/admin", tags=["admin"])
+async def list_coupons_admin(db: AsyncSession = Depends(get_db)):
+    """List all coupons for backoffice management."""
+    from sqlalchemy import select as sa_select
+    result = await db.execute(sa_select(Coupon).order_by(Coupon.created_at.desc()))
+    rows = result.scalars().all()
+    return [
+        {
+            "id": str(c.id),
+            "code": c.code,
+            "name": c.name,
+            "discount_type": c.discount_type,
+            "discount_value": str(c.discount_value),
+            "valid_from": c.valid_from.isoformat() if c.valid_from else None,
+            "valid_until": c.valid_until.isoformat() if c.valid_until else None,
+            "max_uses": c.max_uses,
+            "used_count": c.used_count,
+            "is_active": c.is_active,
+        }
+        for c in rows
+    ]
+
+
 @router.post("/coupons", status_code=201, tags=["admin"])
 async def create_coupon(body: CouponCreate, db: AsyncSession = Depends(get_db)):
     import secrets
