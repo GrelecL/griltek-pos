@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     furs_cert_password: str = ""
 
     sumup_env: str = "mock"  # mock | real
+    esl_env: str = "mock"   # mock | real
     sumup_api_key: str = ""
 
 

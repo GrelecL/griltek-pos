@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.v1.admin import router as admin_router
+from app.api.v1.esl import router as esl_router
+from app.api.v1.pricing import router as pricing_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.catalog import router as catalog_router
 from app.api.v1.customers import router as customers_router
@@ -39,6 +41,8 @@ app.include_router(hospitality_router, prefix="/api/v1")
 app.include_router(payments_router, prefix="/api/v1")
 app.include_router(reports_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(pricing_router, prefix="/api/v1")
+app.include_router(esl_router, prefix="/api/v1")
 
 
 @app.get("/")

@@ -1,4 +1,6 @@
 from app.models.audit import AuditLog
+from app.models.esl import ESLDevice
+from app.models.pricing import PricingRule
 from app.models.auth import Role, User
 from app.models.catalog import Barcode, Category, Price, Product
 from app.models.customer import CreditAccount, Customer
@@ -43,6 +45,8 @@ __all__ = [
     "FiscalCounter", "FiscalRecord",
     "FloorArea", "Table", "Order", "OrderLine", "KDSStation",
     "AuditLog",
+    "PricingRule",
+    "ESLDevice",
     "GiftCard", "GiftCardTransaction",
     "LoyaltyProgram", "LoyaltyAccount", "LoyaltyTransaction",
     "CreditTransaction",
